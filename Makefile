@@ -5,7 +5,7 @@ prefix	= /usr/local
 
 FILES	= $(shell cat Files)
 VER		= $(shell cat Version)
-EXE		= $(shell . Exe)
+EXE		= $(shell . ./Exe)
 PACK	= devrand-$(VER)
 
 GFLAGS	= -g
