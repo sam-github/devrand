@@ -2,8 +2,13 @@
 * Common support files.
 */
 
+#include <signal.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+
+#include <sys/sched.h>
 
 #include "util.h"
 
@@ -59,11 +64,11 @@ void GetOpts(int argc, char* argv[])
 			exit(0);
 
 		case 'd':
-			options.optDebug = 1;
+			options.debug = 1;
 			break;
 
 		case 'i':
-			options.optIrq = atoi(optarg);
+			options.irq = atoi(optarg);
 			break;
 
 		default:	
@@ -72,7 +77,7 @@ void GetOpts(int argc, char* argv[])
 		}
 	}
 
-	if(options.optIrq == 0) {
+	if(options.irq == 0) {
 		Error("A source of randomness must be specified!\n");
 	}
 }
@@ -103,5 +108,71 @@ void Log(const char* format, ...)
 
 	if(format[strlen(format) - 1] != '\n')
 		printf("\n");
+}
+
+/*
+* Daemon setup
+*/
+
+void Fork()
+{
+	if(!options.debug) {
+		pid_t	child = fork();
+
+		switch(child) {
+		case -1:
+			Error("fork failed: [%d] %s", ERR(errno));
+
+		case 0:
+#ifndef __QNXNTO__
+			if(Receive(getppid(), 0, 0) == -1)
+				Error("Receive from parent %d failed: [%d] %s",
+					getppid(), ERR(errno));
+
+			qnx_scheduler(0, 0, SCHED_RR, -1, 1);
+#endif
+
+			signal(SIGHUP, SIG_IGN);
+			signal(SIGINT, SIG_IGN);
+
+			setsid();
+
+			chdir("/");
+
+			break;
+
+			// the parent will wait for the Reply() to indicate that it has
+			// started running
+		default:
+			if(Send(child, 0, 0, 0, 0) == -1)
+				exit(1);
+			exit(0);
+		}
+	}
+}
+
+void Daemonize()
+{
+	if(!options.debug) {
+
+#ifndef __QNXNTO__
+/*
+	could use this to keep device times up-to-date
+		struct _osinfo osdata;
+		if(qnx_osinfo(0, &osdata) == -1) {
+		perror("osinfo");
+		return -1;
+		}
+		timep = MK_FP(osdata.timesel, offsetof(struct _timesel, seconds));
+*/
+
+		// free up our parent, if we have one
+		Reply(getppid(), 0, 0);
+#endif
+
+		close(0);
+		close(1);
+		close(2);
+	}
 }
 

@@ -24,5 +24,8 @@ void    Log(const char* format, ...);
 
 #define ERR(E)  (E), strerror(E)
 
+void	Fork();
+void	Daemonize();
+
 #endif
 
