@@ -6,7 +6,7 @@ Exe
 Files
 Makefile
 Version
-devn-random.c
+devc-random.c
 devrand.c
 devrand.h
 devrandirq.c
@@ -15,6 +15,5 @@ random.c
 random.c.linux
 random.h
 rdtsc64.h
-select.c
 util.c
 util.h
