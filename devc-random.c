@@ -61,7 +61,7 @@ void DeviceAttach(dispatch_t* dpp)
 
 	for(i = 0; i < sizeof(attrs)/sizeof(attrs[0]); ++i) {
 		// initialize attribute structures
-		iofunc_attr_init(&attrs[i].ioa, S_IFCHR | 0444, 0, 0);
+		iofunc_attr_init(&attrs[i].ioa, S_IFCHR | 0666, 0, 0);
 
 		attrs[i].ioa.uid = geteuid();
 		attrs[i].ioa.gid = getegid();
@@ -280,8 +280,8 @@ int IoRead (resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
 		// dirty the access time
 		ocb->attr->ioa.flags |= IOFUNC_ATTR_ATIME;
 	} else {
-		Log("IoRead: nbytes %d nleft %d nonblock %d\n",
-			msg->i.nbytes, nleft, nonblock ? 1 : 0);
+//		Log("IoRead: nbytes %d nleft %d nonblock %d\n",
+//			msg->i.nbytes, nleft, nonblock ? 1 : 0);
 
 		if(nonblock) {
 			status = EAGAIN;
@@ -330,7 +330,7 @@ int IoPulse(message_context_t* ctp, int code, unsigned flags, void* handle)
 
 	InterruptUnmask(sv.sival_int, irqid);
 
-	Log("IoPulse: nbytes %d\n", get_random_size());
+//	Log("IoPulse: nbytes %d\n", get_random_size());
 
 	// unblock pending ionotify()
 	iofunc_notify_trigger(
@@ -352,7 +352,7 @@ int IoNotify(resmgr_context_t* ctp, io_notify_t* msg, RESMGR_OCB_T* ocb)
 	}
 	e = iofunc_notify(ctp, msg, notifications, trig, 0, &a);
 
-	Log("IoNotify: input rdy %d armed %d\n", trig & _NOTIFY_COND_INPUT, a);
+//	Log("IoNotify: input rdy %d armed %d\n", trig & _NOTIFY_COND_INPUT, a);
 
 	return e;
 }
