@@ -55,8 +55,6 @@ static Device	attrs[] = {
 		{ {}, "/dev/urandom", 1 },
 	};
 
-iofunc_notify_t	notifications[3];
-
 void DeviceAttach(dispatch_t* dpp)
 {
 	int	i;
@@ -79,12 +77,60 @@ void DeviceAttach(dispatch_t* dpp)
 	}
 }
 
+//
+// Blocked ionotify() and read() support queues.
+//
+// Perhaps these could be part of Device, but since all the devices
+// read from the same pool of entropy, they're global.
+//
+
+iofunc_notify_t	notifications[3];
+
+struct BlockedRead
+{
+	int		rcvid;
+	int		nbytes;
+	int		priority;
+
+	struct BlockedRead* next;
+};
+
+typedef struct BlockedRead BlockedRead;
+
+BlockedRead*	blocked;
+
+int QueueRead(int rcvid, int nbytes)
+{
+	BlockedRead** rq = &blocked;
+	struct _msg_info info;
+	BlockedRead* r = malloc(sizeof(BlockedRead));
+
+	if(!r) {
+		return errno;
+	}
+
+	if(MsgInfo(rcvid, &info) == -1) {
+		return errno;
+	}
+
+	r->rcvid = rcvid;
+	r->nbytes = nbytes;
+	r->priority = info.priority;
+	r->next = 0;
+
+	while(*rq && (*rq)->priority >= r->priority)
+		rq = &(*rq)->next;
+
+	r->next = *rq;
+
+	*rq = r;
+
+	return EOK;
+}
 
 //
 // Attach to our entropy source
 //
-
-//#define	IRQ_PULSE_CODE	_PULSE_CODE_MINAVAIL
 
 static int irqId = -1;
 
@@ -192,7 +238,7 @@ int IoRead (resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
 	int		nleft;
 	int		nbytes;
 	char	buffer[BUFSIZ];
-	int		status;
+	int		status = EOK;
 	int		nonblock;
 
 	if ((status = iofunc_read_verify (ctp, msg, ocb, &nonblock)) != EOK)
@@ -202,17 +248,18 @@ int IoRead (resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
 	if ((msg->i.xtype & _IO_XTYPE_MASK) != _IO_XTYPE_NONE)
 		return (ENOSYS);
 
-	//  on all reads (first and subsequent) calculate
-	//  how many bytes we can return to the client,
-	//  based upon the number of bytes available (nleft)
-	//  and the client's buffer size
+	// summarily dispose of 0 size reads
+	if(msg->i.nbytes == 0) {
+		_IO_SET_READ_NBYTES (ctp, 0);
+		return EOK;
+	}
 
 	if(ocb->attr->unlimited)
 		nleft = sizeof(buffer);
 	else
-		nleft = get_random_size();
+		nleft = min(get_random_size(), sizeof(buffer));
 
-	nbytes = min (msg->i.nbytes, nleft);
+	nbytes = min(msg->i.nbytes, nleft);
 
 //	Log("IoRead: unlimited %d nleft %d returning %d of %d\n",
 //		ocb->attr->unlimited, nleft, nbytes, msg->i.nbytes);
@@ -233,13 +280,46 @@ int IoRead (resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
 		// dirty the access time
 		ocb->attr->ioa.flags |= IOFUNC_ATTR_ATIME;
 	} else {
-		// they've asked for zero bytes or they've already previously
-		// read everything
-		
-		_IO_SET_READ_NBYTES (ctp, 0);
+		Log("IoRead: nbytes %d nleft %d nonblock %d\n",
+			msg->i.nbytes, nleft, nonblock ? 1 : 0);
+
+		if(nonblock) {
+			status = EAGAIN;
+		}
+		else
+		{
+			status = QueueRead(ctp->rcvid, msg->i.nbytes);
+
+			if(status == EOK)
+				status = _RESMGR_NOREPLY;
+		}
 	}
 
-	return (EOK);
+	return status;
+}
+void UnblockReads()
+{
+	BlockedRead** rq = &blocked;
+	int	sz;
+
+	while(*rq && (sz = get_random_size()))
+	{
+		BlockedRead* r = *rq;
+
+		char	buffer[BUFSIZ];
+		int		nbytes = min(r->nbytes, sz);
+
+		nbytes = min(sizeof(buffer), nbytes);
+
+		get_random_bytes(buffer, nbytes);
+
+		if(MsgReply(r->rcvid, nbytes, buffer, nbytes) == -1) {
+			MsgReply(r->rcvid, -errno, 0, 0);
+		}
+		*rq = r->next;
+
+		free(r);
+	}
 }
 int IoPulse(message_context_t* ctp, int code, unsigned flags, void* handle)
 {
@@ -252,8 +332,12 @@ int IoPulse(message_context_t* ctp, int code, unsigned flags, void* handle)
 
 	Log("IoPulse: nbytes %d\n", get_random_size());
 
+	// unblock pending ionotify()
 	iofunc_notify_trigger(
 		notifications, get_random_size(), IOFUNC_NOTIFY_INPUT);
+
+	// unblock pending read()
+	UnblockReads();
 
 	return 0;
 }
