@@ -5,18 +5,16 @@
 
 * README/LICENCE/package/post
 
-The following would make the implementation more complete, but in
-the absence of any use they are low priority.
+The following would make the implementation more complete, but
+aren't necessary.
 
 * keep the device times up to date
 
 * chmod(), chown() - in case you want to change this on-the-fly
 
-* ioctl() - random.c allows a few ioctls
+* ioctl() - random.c allows a few ioctls, I could do for complete
+  Linux emulation.
 
-* select()
-
-* write()
-
-I don't intend to implement this, I'm not convinced of its usefulness.
+* write() - Used by Linux to seed the randomness, I don't intend
+  to implement this, I'm not convinced of its usefulness.
 
