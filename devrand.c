@@ -323,7 +323,7 @@ void Fork()
 
 		case 0:
 			if(Receive(getppid(), 0, 0) == -1)
-				Error("Receive from parent failed: [%d] %s",
+				Error("Receive from parent %d failed: [%d] %s",
 					getppid(), ERR(errno));
 
 			qnx_scheduler(0, 0, SCHED_RR, -1, 1);
@@ -341,8 +341,7 @@ void Fork()
 			// started running
 		default:
 			if(Send(child, 0, 0, 0, 0) == -1)
-				Error(0, "Send to child failed: [%d] %s",
-					ERR(errno));
+				exit(1);
 			exit(0);
 		}
 	}
@@ -379,7 +378,7 @@ int Loop()
 
 		if(pid == -1) {
 			if(errno != EINTR) {
-				Log("Receive() failed: [%d] %s", strerror(errno));
+				Log("Receive() failed: [%d] %s", ERR(errno));
 			}
 			continue;
 		}
