@@ -1,0 +1,26 @@
+
+*** Port of gnupg-1.0.1 and Linux's /dev/random device to QNX4 & Neutrino
+
+I've ported gnupg-1.0.1 to QNX4 (not hard) but it complains
+about not having a good source of randomness. The web page
+recommends against encrypting messages or generating keys
+with gpg without a source of randomness, and cites Linux's
+as a good one, so I ported it. I also ported it to Neutrino.
+
+Neutrino lacks so many of the utilities used by the generic
+unix code to attempt entropy gathering in user-space that
+gnupg runs so slowly as to be unuseable without a /dev/random.
+
+For gnupg, the patches, a tar of the patched files for those
+lacking GNU patch, and binaries for those lacking GNU cc are
+on my web site, as well as the source for the driver for
+/dev/random.
+
+http://www.emyr.net/Sam
+
+If anybody has problems with the driver, or the gnupg port,
+drop me a line.
+
+Sam
+sam@cogent.ca
+

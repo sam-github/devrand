@@ -1,0 +1,9 @@
+# Guesses exe to build
+
+if [ `uname -s` = "QNX" ]
+then
+	echo Dev.random
+else
+	echo devn-random
+fi
+
