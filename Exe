@@ -4,6 +4,6 @@ if [ `uname -s` = "QNX" ]
 then
 	echo Dev.random
 else
-	echo devn-random
+	echo devc-random
 fi
 

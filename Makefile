@@ -12,7 +12,7 @@ GFLAGS	= -g
 OFLAGS	= -O
 XFLAGS	= $(OFLAGS)
 
-CFLAGS	= -w9 $(XFLAGS)
+CFLAGS	= -w7 $(XFLAGS)
 LDFLAGS	= $(XFLAGS)
 
 all: $(EXE)
@@ -20,7 +20,7 @@ all: $(EXE)
 echo:
 	: EXE $(EXE)
 
-devn-random: devn-random.o random.o util.o
+devc-random: devc-random.o random.o util.o
 	$(LINK.c) -o $@ $^
 	chown root $@
 	chmod u+s $@
@@ -37,14 +37,10 @@ Dev.random: devrand.o devrandirq.o random.o util.o
 devrandirq.o: devrandirq.c devrandirq.h
 	cc -c $(CFLAGS) -Wc,-s -zu -o $@ $<
 
-random.o: random.c random.h
-	$(COMPILE.c) $(CFLAGS) -Wc,-s -o $@ $<
-
-devn-random.o: devn-random.c random.h util.h
+devc-random.o: devc-random.c random.h util.h
 devrand.o: devrand.c random.h devrandirq.h random.h rdtsc64.h util.h
 random.o: random.c random.h
 util.o: util.c util.h
-select: select.c
 
 install: $(EXE)
 	mkdir -p $(prefix)/bin
