@@ -67,6 +67,7 @@ int Fstat(Ocb* ocb, pid_t pid);
 int Open(pid_t pid, int unit, int fd, int oflag, int mode);
 int Write(Ocb* ocb, pid_t pid, int nbytes, const char* data, int datasz);
 int Read(Ocb* ocb, pid_t pid, int nbytes);
+int Select(pid_t pid, struct _io_select* msg);
 
 void DoReadQueue(void);
 
@@ -169,6 +170,47 @@ void QueueReadRequest(ReadRequest* r)
 	r->next = *rq;
 
 	*rq = r;
+}
+
+ArmedPid*	armedq;
+
+int SelectArm(pid_t pid, pid_t proxy)
+{
+	ArmedPid* a = (struct ArmedPid*) malloc(sizeof(struct ArmedPid));
+
+	if(!a)
+		return ENOMEM;
+
+	a->pid = pid;
+	a->proxy = proxy;
+
+	a->next = armedq;
+
+	armedq = a;
+
+	return EOK;
+}
+void SelectDisarm(pid)
+{
+	ArmedPid** ap = &armedq;
+
+	while(*ap && (*ap)->pid != pid)
+		ap = &(*ap)->next;
+
+	if(*ap) {
+		*ap = (*ap)->next;
+		free(*ap);
+	}
+}
+void SelectTrigger()
+{
+	while(armedq) {
+		ArmedPid* a = armedq;
+		armedq = a->next;
+
+		Trigger(a->proxy);
+		free(a);
+	}
 }
 
 /*
@@ -391,6 +433,7 @@ int Loop()
 //			Log("Irq: random size %d\n", get_random_size());
 
 			// now that we have more entropy...
+			SelectTrigger();
 			DoReadQueue();
 
 			continue;
@@ -477,6 +520,11 @@ int Service(pid_t pid, Msg* msg)
 
 	  } break;
 
+	case _IO_SELECT:
+		status = Select(pid, &msg->select);
+
+		break;
+
 	case _FSYS_UMOUNT: {
 		char* path = 0;
 
@@ -554,7 +602,6 @@ int Service(pid_t pid, Msg* msg)
 //	case _IO_CHMOD: break;
 //	case _IO_CHOWN: break;
 //	case _IO_IOCTL: break;
-//	case _IO_SELECT: break;
 //	case _IO_QIOCTL: break;
 
 	case _SYSMSG: {
@@ -778,6 +825,103 @@ int Read(Ocb* ocb, pid_t pid, int nbytes)
 
 		DoReadQueue();
 	}
+	return -1;
+}
+/*
+void BitSet(short unsigned* flag, short unsigned mask)
+{
+	*flag |= mask;
+}
+void BitClear(short unsigned* flag, short unsigned mask)
+{
+	*flag &= ~mask;
+}
+*/
+int Select(pid_t pid, struct _io_select* msg)
+{
+	struct _io_select_reply* reply = 0;
+	int sz = 0;
+	int	armed = 0;
+	int i = 0;
+
+	Log("Select pid %d mode %#x proxy %d nfds %d\n",
+		msg->pid, msg->mode, msg->proxy, msg->nfds);
+
+	// the msg and reply are identical sizes, so we can sizeof msg
+	sz = sizeof(struct _io_select) + msg->nfds * sizeof(struct _select_set);
+
+	reply = (struct _io_select_reply*) alloca(sz);
+
+	if(!reply)
+		return ENOMEM;
+
+	if(Readmsg(pid, 0, reply, sz) == -1) {
+		return errno;
+	}
+
+	reply->status	= EOK;
+	reply->nfds		= 0;
+	memset(reply->zero, 0, sizeof(reply->zero));
+
+	/* look for fds that we own */
+	for(i = 0; i < msg->nfds; i++) {
+		Ocb* ocb = FdGet(pid, reply->set[i].fd);
+		unsigned short request	= reply->set[i].flag & 07;
+		unsigned short response	= 0;
+
+		if(!ocb)
+			continue;
+
+		reply->set[i].flag |= _SEL_POLLED;
+
+		/* Never an exceptional condition and unwriteable... so lie
+		* and they'll find out what they want is impossible?
+		*/
+		if(reply->set[i].flag & _SEL_EXCEPT) {
+			reply->set[i].flag |= _SEL_IS_EXCEPT;
+			reply->nfds++;
+		}
+
+		if(reply->set[i].flag & _SEL_OUTPUT) {
+			reply->set[i].flag |= _SEL_IS_OUTPUT;
+			reply->nfds++;
+		}
+
+		if(reply->set[i].flag & _SEL_INPUT) {
+			Device *device = Unit(ocb->unit);
+			if(device->unlimited || (get_random_size() > 0)) {
+				reply->set[i].flag |= _SEL_IS_INPUT;
+				reply->nfds++;
+			} else {
+				reply->set[i].flag &= ~_SEL_IS_INPUT;
+			}
+		}
+		response = (reply->set[i].flag >> 4) & 07;
+
+		if(msg->mode & _SEL_ARM) {
+			if(request & response) {
+				reply->set[i].flag &= ~_SEL_ARMED;
+			} else {
+				reply->set[i].flag |= _SEL_ARMED;
+				armed++;
+			}
+		} else if(msg->mode & _SEL_POLL) {
+			reply->set[i].flag &= ~_SEL_ARMED;
+		}
+	}
+
+	if(msg->mode & _SEL_POLL) {
+		SelectDisarm(pid);
+	} else if(msg->mode & _SEL_ARM) {
+		if(armed) {
+			int e = SelectArm(pid, msg->proxy);
+			if(e != EOK)
+				return e;
+		}
+	}
+
+	Reply(pid, reply, sz);
+
 	return -1;
 }
 

@@ -33,10 +33,10 @@ union Msg
 	msg_t	status;
 
 	struct _io_open 				open;
-	struct _io_open_reply 			open_reply;
+	//struct _io_open_reply 			open_reply;
 
 	struct _io_close 				close;
-	struct _io_close_reply 			close_reply;
+	//struct _io_close_reply 			close_reply;
 
 //	struct _fsys_mkspecial			mkspec;
 //	struct _fsys_mkspecial_reply	mkspec_reply;
@@ -45,22 +45,22 @@ union Msg
 //	struct _fsys_readlink_reply		rdlink_reply;
 
 	struct _fsys_umount				umount;
-	struct _fsys_umount_reply		umount_reply;
+	//struct _fsys_umount_reply		umount_reply;
 
 	struct _io_dup 					dup;
-	struct _io_dup_reply 			dup_reply;
+	//struct _io_dup_reply 			dup_reply;
 
 	struct _io_write 				write;
-	struct _io_write_reply 			write_reply;
+	//struct _io_write_reply 			write_reply;
 
 	struct _io_read 				read;
-	struct _io_read_reply 			read_reply;
+	//struct _io_read_reply 			read_reply;
 
 	struct _io_lseek 				seek;
-	struct _io_lseek_reply 			seek_reply;
+	//struct _io_lseek_reply 			seek_reply;
 
 	struct _io_fstat				fstat;
-	struct _io_fstat_reply			fstat_reply;
+	//struct _io_fstat_reply			fstat_reply;
 
 //	struct _io_readdir 				readdir;
 //	struct _io_readdir_reply	 	readdir_reply;
@@ -69,13 +69,16 @@ union Msg
 //	struct _io_rewinddir_reply 		rewinddir_reply;
 
 	struct _io_open					remove;
-	struct _io_open_reply			remove_reply;
+	//struct _io_open_reply			remove_reply;
 
-	struct _io_chmod 				chmod;
+	//struct _io_chmod 				chmod;
 
-	struct _io_chown 				chown;
+	//struct _io_chown 				chown;
 
-	struct _io_utime 				utime;
+	//struct _io_utime 				utime;
+
+	struct _io_select				select;
+	//struct _io_select_reply			select_reply;
 
 	//struct _io_lock 			
 	//struct _io_config 			
@@ -87,8 +90,6 @@ union Msg
 	//struct _io_qioctl 			
 	//struct _io_qioctl_reply 			
 	//struct _select_set 			
-	//struct _io_select 			
-	//struct _io_select_reply 			
 
 	// the system message structure is lame, build a better one here
 	struct _sysmsg {
@@ -152,6 +153,15 @@ struct ReadRequest
 
 typedef struct ReadRequest ReadRequest;
 
+struct ArmedPid
+{
+	pid_t	pid;
+	pid_t	proxy;
+
+	struct ArmedPid* next;
+};
+
+typedef struct ArmedPid ArmedPid;
 
 #endif
 
