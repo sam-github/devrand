@@ -9,7 +9,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/types.h>
 #include <sys/sched.h>
+#include <sys/stat.h>
 
 #ifdef __QNXNTO__
 #include <sys/neutrino.h>
