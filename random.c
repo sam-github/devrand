@@ -238,6 +238,7 @@
  */
 
 #ifdef __QNX__
+#define RANDOM
 #include "random.h"
 #else
 #include <linux/utsname.h>
@@ -264,7 +265,7 @@
 #undef BENCHMARK_NOINT
 #define ROTATE_PARANOIA
 
-#define POOLWORDS 128    /* Power of 2 - note that this is 32-bit words */
+#define POOLWORDS 2048    /* Power of 2 - note that this is 32-bit words */
 #define POOLBITS (POOLWORDS*32)
 /*
  * The pool is stirred with a primitive polynomial of degree POOLWORDS
@@ -466,7 +467,7 @@ extern inline __u32 rotate_left(int i, __u32 word)
 	
 }
 #else
-#ifndef __QNX__
+#ifdef __GNUC__
 extern inline __u32 rotate_left(int i, __u32 word)
 {
 	__asm__("roll %%cl,%0"
@@ -744,7 +745,7 @@ static void add_timer_randomness(struct random_bucket *r,
 	begin_benchmark(&timer_benchmark);
 #endif
 #if defined (__i386__)
-#ifdef __QNX__
+#ifdef __QNX4__
 	// See the CPUID Instruction, from 3-71, it has a flag that
 	// says whether the TSC is available, but you have to check
 	// the EFLAGS register to see if CPUID is supported (3-75).
@@ -755,7 +756,11 @@ static void add_timer_randomness(struct random_bucket *r,
 		num ^= l64.hi;
 	}
 #else
+#ifndef __QNXNTO__
 	if (boot_cpu_data.x86_capability & X86_FEATURE_TSC) {
+#else
+	if (1) {
+#endif
 		__u32 high;
 		__asm__(".byte 0x0f,0x31"
 			:"=a" (time), "=d" (high));
@@ -1271,8 +1276,10 @@ static ssize_t extract_entropy(struct random_bucket *r, char * buf,
 	else
 		r->entropy_count = 0;
 
-//	if (r->entropy_count < WAIT_OUTPUT_BITS)
-//		wake_up_interruptible(&random_write_wait);
+#ifndef __QNX__
+	if (r->entropy_count < WAIT_OUTPUT_BITS)
+		wake_up_interruptible(&random_write_wait);
+#endif
 	
 	while (nbytes) {
 		/* Hash the pool to get the output */
@@ -1417,12 +1424,14 @@ random_read(struct file * file, char * buf, size_t nbytes, loff_t *ppos)
 }
 #endif
 
+#ifndef __QNX__
 static ssize_t
 random_read_unlimited(struct file * file, char * buf,
 		      size_t nbytes, loff_t *ppos)
 {
 	return extract_entropy(&random_state, buf, nbytes, 1);
 }
+#endif
 
 #ifndef __QNX__
 static unsigned int

@@ -23,51 +23,38 @@
 #ifndef RANDOM_H
 #define RANDOM_H
 
-#include <sys/types.h>
-
-#include <errno.h>
-#include <fcntl.h>
-#include <string.h>
-#include <stdlib.h>
-#include <time.h>
-#include <unix.h>
-
-#ifdef __QNX__
-#	include "rdtsc64.h"
+#ifndef __QNX__
+#	error "This is only for using random.c under QNX4 and NTO!"
 #endif
+
+/*
+* API exported by random.c
+*/
 
 void rand_initialize(void);
 int rand_initialize_irq(int irq);
 void add_interrupt_randomness(int irq);
 void get_random_bytes(void *buf, int nbytes);
 int  get_random_size(void);
+#include <sys/types.h>
 
 /*
-struct file
-{
-	int	pid;
-	int	f_flags;
-};
-
-struct poll_table
-{
-	int unused;
-};
-
-struct wait_queue
-{
-	struct file* f;
-	struct wait_queue* q;
-};
-
-void wake_up_interruptible(struct wait_queue** wq);
-
-typedef struct poll_table poll_table;
+* Definitions used by the module: provided to fake out <linux/...>
 */
 
-/*
-* Typedefs used by the module.
-*/
+#ifdef RANDOM
+
+#include <errno.h>
+#include <fcntl.h>
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
+
+#ifndef __QNXNTO__
+#	define __QNX4__
+#	include <unix.h>
+#	include "rdtsc64.h"
+#endif
 
 typedef unsigned int __u32;
 typedef   signed int __s32;
@@ -75,9 +62,9 @@ typedef   signed int __s32;
 typedef unsigned short __u16;
 typedef unsigned short __u8;
 
-#define NR_IRQS 16
-
+#ifndef __QNXNTO__
 typedef __s32 ssize_t;
+#endif
 typedef __u32 loff_t;
 
 #define inline
@@ -91,20 +78,30 @@ typedef __u32 loff_t;
 
 #define kmalloc(X, Y) malloc(X)
 
-#ifdef __QNX__
+#ifndef __QNXNTO__
 #	define __i386__
 #endif
 
-#define rotate_left(I, WORD) _lrotl(WORD, I)
+#ifndef __QNXNTO__
+#	define rotate_left(I, WORD) _lrotl(WORD, I)
+#endif
 
-/*
-int copy_from_user(void* dst, const void* src, size_t bytes)
+#ifdef __i386__
+#	define NR_IRQS 16
+#else
+#	error "NR_IRQS must be configured for this platform!"
+#endif
+
+static int Jiffies(void)
 {
-	memcpy(dst, src, bytes);
-
-	return bytes;
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	return ts.tv_nsec;
 }
-*/
+
+#define jiffies Jiffies()
+
+#endif /* RANDOM */
 
 #endif
 
