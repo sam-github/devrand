@@ -1,0 +1,22 @@
+
+* auto-detect presence of the Pentium TSC.
+
+* multiple irqs
+
+* README/LICENCE/package/post
+
+The following would make the implementation more complete, but in
+the absence of any use they are low priority.
+
+* keep the device times up to date
+
+* chmod(), chown() - in case you want to change this on-the-fly
+
+* ioctl() - random.c allows a few ioctls
+
+* select()
+
+* write()
+
+I don't intend to implement this, I'm not convinced of its usefulness.
+
