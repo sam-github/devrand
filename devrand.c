@@ -21,6 +21,8 @@
 //
 
 #include "devrand.h"
+#include "devrandirq.h"
+#include "random.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -55,6 +57,7 @@ void	ReplyMsg(pid_t pid, const void* msg, size_t size);
 Ocb*	FdGet(pid_t pid, int fd);
 int		FdMap(pid_t pid, int dst_fd, Ocb* ocb);
 int		FdUnMap(pid_t pid, int fd);
+void	FdGetPrio(pid_t pid, int* priority);
 
 const char* MessageName(msg_t type);
 const char* HandleOflagName(short int oflag);
@@ -64,6 +67,8 @@ int Fstat(Ocb* ocb, pid_t pid);
 int Open(pid_t pid, int unit, int fd, int oflag, int mode);
 int Write(Ocb* ocb, pid_t pid, int nbytes, const char* data, int datasz);
 int Read(Ocb* ocb, pid_t pid, int nbytes);
+
+void DoReadQueue(void);
 
 /*
 * Error reporting
@@ -77,6 +82,9 @@ void Error(const char* format, ...)
 	vfprintf(stderr, format, al);
 	va_end(al);
 
+	if(format[strlen(format) - 1] != '\n')
+		fprintf(stderr, "\n");
+
 	exit(1);
 }
 void Log(const char* format, ...)
@@ -85,6 +93,9 @@ void Log(const char* format, ...)
 	va_start(al, format);
 	vfprintf(stderr, format, al);
 	va_end(al);
+
+	if(format[strlen(format) - 1] != '\n')
+		printf("\n");
 }
 
 /*
@@ -93,6 +104,11 @@ void Log(const char* format, ...)
 
 Device units[2];
 
+int	link_count;
+
+#define UNIT_RANDOM 0
+#define UNIT_URANDOM 1
+
 Device* Unit(int unit)
 {
 	if(unit < 0 || unit >= sizeof(units))
@@ -100,7 +116,6 @@ Device* Unit(int unit)
 
 	return &units[unit];
 }
-
 void DeviceInit()
 {
 	int unit;
@@ -122,9 +137,38 @@ void DeviceInit()
 		s->st_mtime	=
 		s->st_atime	= 
 		s->st_ctime	= time(0);
-		s->st_mode	= S_IFCHR | 0640; /* rw- r-- --- */
+		s->st_mode	= S_IFCHR | 0440; /* r-- r-- --- */
 		s->st_nlink	= 1;
 	}
+	/* despite the loop above, we only have 2 units, one unlimited,
+	* one not.
+	*/
+	assert(unit == 2);
+	link_count = unit;
+
+	units[UNIT_RANDOM].unlimited = 0;
+	units[UNIT_URANDOM].unlimited = 1;
+}
+
+/*
+* Request Queues
+*/
+
+ReadRequest* readq;
+
+// TODO - queue must be maintained in process priority order
+void QueueReadRequest(ReadRequest* r)
+{
+	ReadRequest** rq = &readq;
+
+	FdGetPrio(r->pid, &r->priority);
+
+	while(*rq && (*rq)->priority >= r->priority)
+		rq = &(*rq)->next;
+
+	r->next = *rq;
+
+	*rq = r;
 }
 
 /*
@@ -146,15 +190,28 @@ Msg	msg;
 */
 char*	arg0		= 0;
 int		optDebug	= 0;
-int		optIrq		= 0;
+int		optIrq		= 1;
 
 char usage[] =
 	"Usage: %s [-hd] [-i <irq>]\n"
 	;
 char help[] =
-	"  -h   print this useful help message\n"
-	"  -d   debug mode, don't fork into a daemon\n"
-	"  -i   irq to use for source of randomness\n"
+	"  -h   print this helpful message\n"
+	"  -d   debug mode, don't fork into the background\n"
+	"  -i   irq to use for source of entropy (default is 1, the\n"
+	"       PC keyboard)\n"
+	"\n"
+	"Unmount /dev/random and /dev/urandom to unload the driver\n"
+	"nicely, it will exit when there are no mounted devices and\n"
+	"no open files.\n"
+	"\n"
+	"/dev/random acts like a pipe, it will return as much data as\n"
+	"is available, or at least one byte if it blocks. /dev/urandom\n"
+	"will return successive cryptographic hashes of the same data,\n"
+	"so it's not as random but sill useful, and it never blocks.\n"
+	"\n"
+	"Use a good irq as a source for entropy, not the timer interrupt!\n"
+	"The mouse or keyboard interrupt would be a good choice.\n"
 	;
 
 void Help()
@@ -192,6 +249,48 @@ void GetOpts(int argc, char* argv[])
 			exit(1);
 		}
 	}
+
+	if(optIrq == 0) {
+		Error("A source of randomness must be specified!\n");
+	}
+}
+
+/*
+* Main
+*/
+int main(int argc, char* argv[])
+{
+	GetOpts(argc, argv);
+
+	Fork();
+
+	SetProcessFlags();
+
+	rand_initialize();
+
+	DeviceInit();
+	FdInit();
+
+	AttachPrefix("/dev/random", UNIT_RANDOM);
+	AttachPrefix("/dev/urandom", UNIT_URANDOM);
+
+	HookIrqs();
+
+	Daemonize();
+
+	return Loop();
+}
+
+/*
+* Implementation
+*/
+void HookIrqs()
+{
+	if(HookIrqNo(optIrq) == -1)
+		Error("Attach to %d failed: [%d] %s\n", optIrq, ERR(errno));
+	if(!rand_initialize_irq(optIrq)) {
+		Error("Attach to %d failed: [%d] %s\n", optIrq, ERR(ENOMEM));
+	}
 }
 void SetProcessFlags()
 {
@@ -200,7 +299,7 @@ void SetProcessFlags()
 		  _PPF_PRIORITY_REC		// receive requests in priority order
 		| _PPF_SERVER			// we're a server, send us version requests
 		| _PPF_PRIORITY_FLOAT	// float our priority to clients
-		//| _PPF_SIGCATCH		// catch our clients signals, to clean up
+		| _PPF_SIGCATCH		// catch our clients signals, to clean up
 		;
 
 	if(qnx_pflags(pflags, pflags, 0, 0) == -1)
@@ -210,7 +309,7 @@ void SetProcessFlags()
 void AttachPrefix(const char* prefix, int unit)
 {
 	if(qnx_prefix_attach(prefix, 0, unit) == -1)
-		Error("qnx_prefix_attach failed: [%d] %s",
+		Error("qnx_prefix_attach %s failed: [%d] %s",
 			prefix, ERR(errno));
 }
 void Fork()
@@ -227,6 +326,15 @@ void Fork()
 				Error("Receive from parent failed: [%d] %s",
 					getppid(), ERR(errno));
 
+			qnx_scheduler(0, 0, SCHED_RR, -1, 1);
+
+			signal(SIGHUP, SIG_IGN);
+			signal(SIGINT, SIG_IGN);
+
+			setsid();
+
+			chdir("/");
+
 			break;
 
 			// the parent will wait for the Reply() to indicate that it has
@@ -238,21 +346,12 @@ void Fork()
 			exit(0);
 		}
 	}
-
-	qnx_scheduler(0, 0, SCHED_RR, -1, 1);
-
-	signal(SIGHUP, SIG_IGN);
-	signal(SIGINT, SIG_IGN);
-
-	setsid();
-
-	chdir("/");
-
 }
 void Daemonize()
 {
 	if(!optDebug) {
 /*
+	can use this to keep device times up-to-date
 		struct _osinfo osdata;
 		if(qnx_osinfo(0, &osdata) == -1) {
 		perror("osinfo");
@@ -269,12 +368,12 @@ void Daemonize()
 		close(2);
 	}
 }
-void Loop()
+int Loop()
 {
 	pid_t pid;
 	int  status;
 
-	while(1)
+	while(link_count > 0)
 	{
 		pid = Receive(0, &msg, sizeof(msg));
 
@@ -284,17 +383,56 @@ void Loop()
 			}
 			continue;
 		}
+		if(pid == IrqProxy()) {
+			while(Creceive(pid, 0, 0) == pid)
+				; // clear out any proxy overruns
+
+			add_interrupt_randomness(optIrq);
+
+//			Log("Irq: random size %d\n", get_random_size());
+
+			// now that we have more entropy...
+			DoReadQueue();
+
+			continue;
+		}
 
 		status = Service(pid, &msg);
 
-		Log("Service() returned status %d (%s)",
-			status, status == -1 ? "none" : strerror(status));
+		Log("Service() returned status %d (%s), link_count %d",
+			status, status == -1 ? "none" : strerror(status), link_count);
 
 		if(status >= EOK) {
 			msg.status = status;
 			ReplyMsg(pid, &msg, sizeof(msg.status));
 		}
 	}
+	return 0;
+}
+int CheckPerms(pid_t pid, mode_t mode, int unit)
+{
+	static const basemodes[] = { S_IROTH, S_IWOTH, S_IROTH|S_IWOTH, 0 };
+	int	uid;
+	int	gid;
+	unsigned fuid	= Unit(unit)->stat.st_ouid;
+	unsigned fgid	= Unit(unit)->stat.st_ogid;
+	unsigned fmode	= Unit(unit)->stat.st_mode;
+	unsigned okmode	= 0;
+
+	FdGetIds(pid, &uid, &gid);
+
+	mode = basemodes[mode & O_ACCMODE];
+
+	if (uid == 0) {
+		okmode = S_IRWXO;
+	} else if (uid == fuid) {
+		okmode = (fmode >> 6) & 007;
+	} else if (gid == fgid) {
+		okmode = (fmode >> 3) & 007;
+	} else {
+		okmode = fmode & 007;
+	}
+	return (mode & okmode) == mode ? EOK : EPERM;
 }
 int Service(pid_t pid, Msg* msg)
 {
@@ -312,26 +450,7 @@ int Service(pid_t pid, Msg* msg)
 			status = Stat(pid, msg->open.unit);
 		}
 		break;
-/*
-	case _IO_HANDLE:
-		// XXX handle must have different permissions checks than Open!
-		// XXX the uname, chmod, chown calls should be supported!
 
-		switch(msg->open.oflag)
-		{
-		case _IO_HNDL_RDDIR:
-			status = Open(pid, msg->open.unit, msg->open.fd,
-									msg->open.oflag, msg->open.mode);
-			break;
-
-		default:
-			Log("unknown msg type IO_HANDLE subtype %s (%d) path \"%s\"",
-				HandleOflagName(msg->open.oflag), msg->open.oflag, msg->open.path);
-			status = ENOSYS;
-			break;
-		}
-		break;
-*/
 	case _IO_OPEN:
 		status = Open(pid, msg->open.unit, msg->open.fd,
 								msg->open.oflag, msg->open.mode);
@@ -349,43 +468,59 @@ int Service(pid_t pid, Msg* msg)
 	case _IO_DUP: {
 		Ocb* ocb = FdGet(msg->dup.src_pid, msg->dup.src_fd);
 
-		if(!ocb)
-		{
+		if(!ocb) {
 			status = EBADF;
-		}
-		else if(!FdMap(pid, msg->dup.dst_fd, ocb))
-		{
+		} else if(!FdMap(pid, msg->dup.dst_fd, ocb)) {
 			status = errno;
-		}
-		else
-		{
+		} else {
 			status = EOK;
 		}
 
-		} break;
+	  } break;
 
 	case _FSYS_UMOUNT: {
+		char* path = 0;
+
 		if(msg->remove.path[0] != '\0') {
 			status = EINVAL;
 			break;
 		}
+		switch(msg->remove.unit) {
+		case UNIT_RANDOM:	path = "/dev/random"; break;
+		case UNIT_URANDOM:	path = "/dev/urandom"; break;
+		}
 
-		// reply with EOK, then exit
-		msg->status = EOK;
-		ReplyMsg(pid, msg, sizeof(msg->status));
+		if(!path) {
+			status = ENOENT;
+		} else {
+			int uid;
+			int gid;
+			int fuid = Unit(msg->remove.unit)->stat.st_ouid;
+			int fgid = Unit(msg->remove.unit)->stat.st_ogid;
 
-		Log("umount - exiting manager");
-		exit(0);
+			FdGetIds(pid, &uid, &gid);
 
-		} break;
+			if(uid != fuid && gid != fgid) {
+				status = EPERM;
+				break;
+			}
+
+			// reply with EOK, then exit
+			status = EOK;
+			if(qnx_prefix_detach(path) == -1) {
+				Log("detach %s failed: [%d] %s\n", path, ERR(errno));
+				status = errno;
+			} else {
+				link_count--;
+			}
+		}
+	  } break;
 
 	// operations supported directly by ocbs
 	case _IO_FSTAT:
 	case _IO_WRITE:
 	case _IO_READ:
 	case _IO_LSEEK:
-	case _IO_READDIR:
-	case _IO_REWINDDIR:
 	{
 		// These messages all have the fd at the same offset, so the
 		// following works:
@@ -436,6 +571,15 @@ int Service(pid_t pid, Msg* msg)
 			Reply(pid, msg, sizeof(msg->sysmsg_reply));
 
 			break;
+
+		case _SYSMSG_SUBTYPE_SIGNAL:
+			// pid got a signal...
+
+			ReadUnblock(pid);
+
+			status = -1;
+
+			break;
 		
 		default:
 			Log("unknown msg type SYSMSG subtype %s (%d)",
@@ -455,7 +599,6 @@ int Service(pid_t pid, Msg* msg)
 
 	return status;
 }
-
 void ReplyMsg(pid_t pid, const void* msg, size_t size)
 {
 	if(Reply(pid, msg, size) == -1) {
@@ -464,24 +607,281 @@ void ReplyMsg(pid_t pid, const void* msg, size_t size)
 			);
 	}
 }
-
-void main(int argc, char* argv[])
+int Stat(pid_t pid, int unit)
 {
-	GetOpts(argc, argv);
+	struct _io_fstat_reply r;
+	Device* d = Unit(unit);
 
-	Fork();
+	if(!d)
+		return ENOENT;
 
-	SetProcessFlags();
+	r.status = EOK;
+	r.zero = 0;
+	r.stat = d->stat;
 
-	DeviceInit();
-	FdInit();
+	Reply(pid, &r, sizeof(r));
 
-	AttachPrefix("/dev/random", 0);
-	AttachPrefix("/dev/urandom", 1);
+	return -1;
+}
+int Fstat(Ocb* ocb, pid_t pid)
+{
+	return Stat(pid, ocb->unit);
+}
+int Open(pid_t pid, int unit, int fd, int oflag, int mode)
+{
+	Ocb* ocb = 0;
 
-	Daemonize();
+	if(!Unit(unit))
+		return ENOENT;
 
-	Loop();
+	if((oflag&(O_CREAT|O_EXCL)) == (O_CREAT|O_EXCL))
+		return EEXIST;
+	
+	if(CheckPerms(pid, oflag, unit) != EOK)
+		return EPERM;
+
+	ocb = (Ocb*) malloc(sizeof(Ocb));
+
+	memset(ocb, '\0', sizeof(Ocb));
+
+	ocb->links	= 0;
+	ocb->unit	= unit;
+	ocb->oflag	= oflag;
+	ocb->mode	= mode;
+
+	// at the very least, Ocb must contain the RD, WR, and NONBLOCK state
+	if(!FdMap(pid, fd, ocb)) {
+		free(ocb);
+		return errno;
+	}
+
+	return EOK;
+}
+int Write(Ocb* ocb, pid_t pid, int nbytes, const char* data, int datasz)
+{
+	// I don't see a point to this, so its not implemented.
+
+	return ENOSYS;
+}
+/*
+* These implementations closely parallel the implementation of Linux's
+* random_read() and random_read_unlimited().
+*/
+void ReadUnblock(pid_t pid)
+{
+	ReadRequest** rq = &readq;
+	ReadRequest* r = 0;
+
+	while(*rq && (*rq)->pid != pid)
+		rq = &(*rq)->next;
+
+	r = *rq;
+
+	*rq = r->next;
+
+	if(r->reply.nbytes == 0)
+		r->reply.status = EINTR;
+
+	Reply(r->pid, &r->reply, sizeof(r->reply) - sizeof(r->reply.data));
+
+	free(r);
+}
+void DoReadQueue(void)
+{
+	ReadRequest** rq = &readq;
+
+	while(*rq)
+	{
+		// Linux makes this work like a pipe, i.e. you block until
+		// some data is available, not necessarily as much as you
+		// asked for.
+
+		ReadRequest* r = *rq;
+
+		char	entropy[BUFSIZ];
+		int		rdbytes = 0;
+		int		wrbytes = 0;
+		int		unlimited = Unit(r->ocb->unit)->unlimited;
+
+		while(r->reply.nbytes < r->nbytes) {
+			rdbytes = min(BUFSIZ, r->nbytes - r->reply.nbytes);
+
+			if(!unlimited)
+				rdbytes = min(get_random_size(), rdbytes);
+
+			if(rdbytes == 0)
+				break;
+
+			get_random_bytes(entropy, rdbytes);
+
+			wrbytes = Writemsg(r->pid,
+				sizeof(r->reply) - sizeof(r->reply.data) + r->reply.nbytes,
+				entropy, rdbytes);
+
+			if(wrbytes == -1 && r->reply.nbytes == 0) {
+				r->reply.status = errno;
+				break;
+			}
+
+			r->reply.nbytes += wrbytes;
+
+			if(wrbytes < rdbytes)
+				break;
+		}
+
+		// set status to EAGAIN if no data was read, and status is ok,
+		// and non-blocking
+		if(r->reply.nbytes == 0 && r->reply.status == EOK) {
+			if(r->ocb->oflag & O_NONBLOCK) {
+				r->reply.status = EAGAIN;
+			}
+		}
+
+		// no data read and status still ok, so leave blocked
+		if(!r->reply.nbytes && r->reply.status == EOK) {
+			rq = &((*rq)->next);
+			continue;
+		}
+
+		// else, we're done with this request
+		Reply(r->pid, &r->reply, sizeof(r->reply) - sizeof(r->reply.data));
+
+		*rq = r->next;
+
+		free(r);
+	}
+}
+int Read(Ocb* ocb, pid_t pid, int nbytes)
+{
+	// deal summarily with zero-length reads
+
+	if(nbytes == 0) {
+		struct _io_read_reply reply;
+
+		reply.status = EOK;
+		reply.zero = 0;
+		reply.nbytes = 0;
+
+		Reply(pid, &reply, sizeof(reply) - sizeof(reply.data));
+	} else {
+		ReadRequest* r = malloc(sizeof(struct ReadRequest));
+
+		if(!r)
+			return ENOMEM;
+
+		memset(r, 0, sizeof(*r));
+
+		r->pid = pid,
+		r->ocb = ocb;
+		r->nbytes = nbytes;
+
+		QueueReadRequest(r);
+
+		DoReadQueue();
+	}
+	return -1;
+}
+
+/*
+* fd <--> ocb Map
+*
+* This is a dumb fixed-size iplementation, good enough for now.
+*/
+
+#define FDMAX 256
+
+void*	ctrl_ = 0;
+Ocb*	ocbs_[FDMAX];
+
+void FdInit()
+{
+	pid_t pid = getpid();
+	ctrl_ = __init_fd(pid);
+}
+Ocb* FdGet(pid_t pid, int fd)
+{
+	int index = (int) __get_fd(pid, fd, ctrl_);
+
+	if(index <= 0 || index >= FDMAX) {
+		errno = EBADF;
+		return 0;
+	}
+
+	if(!ocbs_[index])
+		errno = EBADF;
+
+	return ocbs_[index];
+}
+int FdMap(pid_t pid, int fd, Ocb* ocb)
+{
+	// index 0 is never used, it means "unmapped"
+	int index = 0;
+
+	if(ocb)
+		ocb->links++;
+
+	if(ocb) {
+		index = 1;
+		while(ocbs_[index])
+			index++;
+	}
+	if(index >= FDMAX) {
+		errno = ENOMEM;
+		return 0;
+	}
+	if(qnx_fd_attach(pid, fd, 0, 0, 0, 0, index) == -1) {
+		Log("qnx_fd_attach(pid %d fd %d) failed: [%d] %s",
+			pid, fd, ERR(errno));
+
+		if(ocb)
+			ocb->links--;
+
+		return 0;
+	}
+
+	ocbs_[index] = ocb;
+
+	if(ocb)
+		link_count++;
+
+	return 1;
+}
+int FdUnMap(pid_t pid, int fd)
+{
+	Ocb* ocb = FdGet(pid, fd);
+
+	if(!ocb)
+		return 0; // attempt by client to close a bad fd
+
+	// zero the mapping to invalidate the fd
+	if(!FdMap(pid, fd, 0))
+		return 0;
+
+	ocb->links--;
+
+	link_count--;
+
+	if(ocb->links == 0)
+		free(ocb);
+
+	return 1;
+}
+void FdGetPrio(pid_t pid, int* priority)
+{
+	struct _psinfo3 psdata3;
+
+	__get_pid_info(pid, &psdata3, ctrl_);
+
+	*priority = psdata3.priority;
+}
+void FdGetIds(pid_t pid, int* uid, int* gid)
+{
+	struct _psinfo3 psdata3;
+
+	__get_pid_info(pid, &psdata3, ctrl_);
+
+	*uid = psdata3.euid;
+	*gid = psdata3.egid;
 }
 
 const char* MessageName(msg_t type)
@@ -592,129 +992,3 @@ const char* SysmsgSubtypeName(short unsigned subtype)
 	default:	return "undefined";
 	}
 }
-int Stat(pid_t pid, int unit)
-{
-	struct _io_fstat_reply r;
-	Device* d = Unit(unit);
-
-	if(!d)
-		return ENOENT;
-
-	r.status = EOK;
-	r.zero = 0;
-	r.stat = d->stat;
-
-	Reply(pid, &r, sizeof(r));
-
-	return -1;
-}
-int Fstat(Ocb* ocb, pid_t pid)
-{
-	return Stat(pid, ocb->unit);
-}
-int Open(pid_t pid, int unit, int fd, int oflag, int mode)
-{
-	Ocb* ocb = (Ocb*) malloc(sizeof(Ocb));
-
-	memset(ocb, '\0', sizeof(Ocb));
-
-	assert(unit == 0);
-
-	ocb->links	= 0;
-	ocb->unit	= unit;
-	ocb->oflag	= oflag;
-	ocb->mode	= mode;
-
-	// at the very least, Ocb must contain the RD, WR, and NONBLOCK state
-	if(!FdMap(pid, fd, ocb)) {
-		free(ocb);
-		return errno;
-	}
-
-	return EOK;
-}
-int Write(Ocb* ocb, pid_t pid, int nbytes, const char* data, int datasz)
-{
-	return ENOSYS;
-}
-int Read(Ocb* ocb, pid_t pid, int nbytes)
-{
-	return ENOSYS;
-}
-
-/*
-* fd <--> ocb Map
-*
-* This is a dumb fixed-size iplementation, good enough for now.
-*/
-
-#define FDMAX 256
-
-void*	ctrl_ = 0;
-Ocb*	ocbs_[FDMAX];
-
-void FdInit()
-{
-	pid_t pid = getpid();
-	ctrl_ = __init_fd(pid);
-}
-Ocb* FdGet(pid_t pid, int fd)
-{
-	int index = (int) __get_fd(pid, fd, ctrl_);
-
-	if(index <= 0 || index >= FDMAX) {
-		errno = EBADF;
-		return 0;
-	}
-
-	if(!ocbs_[index])
-		errno = EBADF;
-
-	return ocbs_[index];
-}
-int FdMap(pid_t pid, int fd, Ocb* ocb)
-{
-	// index 0 is never used, it means "unmapped"
-	int index = 0;
-
-	if(ocb)
-		ocb->links++;
-
-	if(ocb) {
-		index = 1;
-		while(ocbs_[index])
-			index++;
-	}
-	if(qnx_fd_attach(pid, fd, 0, 0, 0, 0, index) == -1) {
-		Log("qnx_fd_attach(pid %d fd %d) failed: [%d] %s",
-			pid, fd, ERR(errno));
-
-		if(ocb)
-			ocb->links--;
-
-		return 0;
-	}
-
-	ocbs_[index] = ocb;
-
-	return 1;
-}
-int FdUnMap(pid_t pid, int fd)
-{
-	Ocb* ocb = FdGet(pid, fd);
-
-	if(!ocb)
-		return 0; // attempt by client to close a bad fd
-
-	// zero the mapping to invalidate the fd
-	if(!FdMap(pid, fd, 0))
-		return 0;
-
-	ocb->links--;
-
-	if(ocb->links == 0)
-		free(ocb);
-
-	return 1;
-}
-

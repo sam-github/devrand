@@ -120,6 +120,7 @@ typedef union Msg Msg;
 struct Device
 {
 	struct stat stat;
+	int unlimited;
 };
 
 typedef struct Device Device;
@@ -134,6 +135,22 @@ struct Ocb
 };
 
 typedef struct Ocb Ocb;
+
+struct ReadRequest
+{
+	pid_t	pid;
+	int		nbytes;
+	Ocb*	ocb;
+
+	int		count;
+	struct _io_read_reply reply;
+
+	/* used to manage the request queue */
+	int		priority;
+	struct ReadRequest* next;
+};
+
+typedef struct ReadRequest ReadRequest;
 
 
 #endif
