@@ -138,7 +138,7 @@ void DeviceInit()
 		s->st_mtime	=
 		s->st_atime	= 
 		s->st_ctime	= time(0);
-		s->st_mode	= S_IFCHR | 0440; /* r-- r-- --- */
+		s->st_mode	= S_IFCHR | 0444; /* r-- r-- r-- */
 		s->st_nlink	= 1;
 	}
 	/* despite the loop above, we only have 2 units, one unlimited,
