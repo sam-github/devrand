@@ -1,9 +1,12 @@
-Files
-Version
 LICENSE
-Makefile
 README
 TODO
+Announce
+Exe
+Files
+Makefile
+Version
+devn-random.c
 devrand.c
 devrand.h
 devrandirq.c
@@ -13,3 +16,5 @@ random.c.linux
 random.h
 rdtsc64.h
 select.c
+util.c
+util.h
