@@ -22,10 +22,11 @@ struct Device;
 #include "util.h"
 #include "random.h"
 
-int IoRead (resmgr_context_t* ctp, io_read_t* msg, RESMGR_OCB_T* ocb);
-int IoPulse(message_context_t* ctp, int code, unsigned flags, void* handle);
-int IoStat(resmgr_context_t* ctp, io_stat_t* msg, iofunc_ocb_t* ocb);
-int IoLseek(resmgr_context_t* ctp, io_lseek_t* msg, iofunc_ocb_t* ocb);
+int IoRead	(resmgr_context_t*	ctp, io_read_t* msg, RESMGR_OCB_T* ocb);
+int IoNotify(resmgr_context_t*	ctp, io_notify_t* msg, RESMGR_OCB_T* ocb);
+int IoStat	(resmgr_context_t*	ctp, io_stat_t* msg, RESMGR_OCB_T* ocb);
+int IoLseek	(resmgr_context_t*	ctp, io_lseek_t* msg, RESMGR_OCB_T* ocb);
+int IoPulse	(message_context_t*	ctp, int code, unsigned flags, void* handle);
 
 //
 // resmgr globals
@@ -53,6 +54,8 @@ static Device	attrs[] = {
 		{ {}, "/dev/random", 0 },
 		{ {}, "/dev/urandom", 1 },
 	};
+
+iofunc_notify_t	notifications[3];
 
 void DeviceAttach(dispatch_t* dpp)
 {
@@ -147,6 +150,7 @@ int main(int argc, char *argv[])
 
 	io_funcs.read = IoRead;
 	io_funcs.write = 0; // ENOSYS
+	io_funcs.notify = IoNotify;
 	io_funcs.stat = IoStat;
 	io_funcs.lseek = IoLseek;
 
@@ -183,7 +187,6 @@ int main(int argc, char *argv[])
 		dispatch_handler(c);
 	}
 }
-
 int IoRead (resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
 {
 	int		nleft;
@@ -207,7 +210,7 @@ int IoRead (resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
 	if(ocb->attr->unlimited)
 		nleft = sizeof(buffer);
 	else
-		nleft = ocb->attr->ioa.nbytes;
+		nleft = get_random_size();
 
 	nbytes = min (msg->i.nbytes, nleft);
 
@@ -238,7 +241,6 @@ int IoRead (resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb)
 
 	return (EOK);
 }
-
 int IoPulse(message_context_t* ctp, int code, unsigned flags, void* handle)
 {
 	union sigval sv = ctp->msg->pulse.value;
@@ -248,7 +250,27 @@ int IoPulse(message_context_t* ctp, int code, unsigned flags, void* handle)
 
 	InterruptUnmask(sv.sival_int, irqid);
 
+	Log("IoPulse: nbytes %d\n", get_random_size());
+
+	iofunc_notify_trigger(
+		notifications, get_random_size(), IOFUNC_NOTIFY_INPUT);
+
 	return 0;
+}
+int IoNotify(resmgr_context_t* ctp, io_notify_t* msg, RESMGR_OCB_T* ocb)
+{
+	int trig = _NOTIFY_COND_OUTPUT|_NOTIFY_COND_OBAND;
+	int	e;
+	int	a = 0;
+
+	if(ocb->attr->unlimited || get_random_size() > 0) {
+		trig |= _NOTIFY_COND_INPUT;
+	}
+	e = iofunc_notify(ctp, msg, notifications, trig, 0, &a);
+
+	Log("IoNotify: input rdy %d armed %d\n", trig & _NOTIFY_COND_INPUT, a);
+
+	return e;
 }
 int IoStat(resmgr_context_t* ctp, io_stat_t* msg, RESMGR_OCB_T* ocb)
 {
@@ -256,11 +278,11 @@ int IoStat(resmgr_context_t* ctp, io_stat_t* msg, RESMGR_OCB_T* ocb)
 
 	ocb->attr->ioa.nbytes = sz;
 
-	Log("IoStat: nbytes %d\n", sz);
+//	Log("IoStat: nbytes %d\n", sz);
 
 	return iofunc_stat_default(ctp, msg, ocb);
 }
-int IoLseek(resmgr_context_t* ctp, io_lseek_t* msg, iofunc_ocb_t* ocb)
+int IoLseek(resmgr_context_t* ctp, io_lseek_t* msg, RESMGR_OCB_T* ocb)
 {
 	ctp = ctp, msg = msg, ocb = ocb;
 
