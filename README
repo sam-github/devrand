@@ -3,7 +3,7 @@ QNX4 Port of Linux's /dev/random
 ** Introduction
 
 This is a port of the random device from Linux, Version 1.04 of
-random.c, to QNX4.
+random.c, to QNX4 and Nto2.
 
 The device has a simple API intended to be called from the rest of the
 kernel on the occurence of random events (such as irqs), and
@@ -14,7 +14,7 @@ support).
 
 This device is apparently well-trusted as a source of randomness,
 and since none of the internal code has been modified by me, I hope
-the QNX4 driver may inherit some of that trust.
+these drivers may inherit some of that trust.
 
 ** Installation
 
@@ -22,7 +22,11 @@ the QNX4 driver may inherit some of that trust.
 
 ** Running
 
-# devrand -h
+   - QNX -
+# Dev.random -h
+
+   - Nto -
+# devc-random -h
 
 ** Credits
 
@@ -33,7 +37,7 @@ It is GPLed.
 rdtsc64.h was scrounged from various uncredited technotes on
 QUICS (www.qnx.com). I assume it's public domain.
 
-The QNX4 resource manager was tacked on by me. It's GPLed.
+The resource manager frameworks were tacked on by me. It's GPLed.
 
 If anybody finds any problems with it, please contact me.
 
