@@ -16,10 +16,6 @@ This device is apparently well-trusted as a source of randomness,
 and since none of the internal code has been modified by me, I hope
 the QNX4 driver may inherit some of that trust.
 
-I've also used ent (see http://www.fourmilab.ch/random/) to evaluate
-the entropy of /dev/random and it looks good, but I'd like some
-confirmation from somebody with more knowledge than me!
-
 ** Installation
 
 # make install
