@@ -20,12 +20,9 @@
 //  I can be contacted as sroberts@uniserve.com.
 //
 
-#include "devrand.h"
-#include "devrandirq.h"
-#include "random.h"
-
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -41,17 +38,15 @@
 #include <sys/sched.h>
 #include <sys/types.h>
 
-void	Error(const char* format, ...);
-void	Log(const char* format, ...);
+#include "devrand.h"
+#include "devrandirq.h"
+#include "random.h"
+#include "util.h"
+
 int		Service(pid_t pid, Msg* msg);
 int		Loop();
-void	Help();
-void	Usage(FILE* out);
-void	GetOpts(int argc, char* argv[]);
 void	SetProcessFlags();
 void	AttachPrefix(const char* prefix, int unit);
-void	Fork();
-void	Deamonize();
 void	ReplyMsg(pid_t pid, const void* msg, size_t size);
 
 Ocb*	FdGet(pid_t pid, int fd);
@@ -70,34 +65,6 @@ int Read(Ocb* ocb, pid_t pid, int nbytes);
 int Select(pid_t pid, struct _io_select* msg);
 
 void DoReadQueue(void);
-
-/*
-* Error reporting
-*/
-#define ERR(E)  (E), strerror(E)
-
-void Error(const char* format, ...)
-{
-	va_list	al;
-	va_start(al, format);
-	vfprintf(stderr, format, al);
-	va_end(al);
-
-	if(format[strlen(format) - 1] != '\n')
-		fprintf(stderr, "\n");
-
-	exit(1);
-}
-void Log(const char* format, ...)
-{
-	va_list	al;
-	va_start(al, format);
-	vfprintf(stderr, format, al);
-	va_end(al);
-
-	if(format[strlen(format) - 1] != '\n')
-		printf("\n");
-}
 
 /*
 * Device Info
@@ -157,7 +124,6 @@ void DeviceInit()
 
 ReadRequest* readq;
 
-// TODO - queue must be maintained in process priority order
 void QueueReadRequest(ReadRequest* r)
 {
 	ReadRequest** rq = &readq;
@@ -228,76 +194,6 @@ struct _sysmsg_version_reply version = {
 Msg	msg;
 
 /*
-* Options
-*/
-char*	arg0		= 0;
-int		optDebug	= 0;
-int		optIrq		= 1;
-
-char usage[] =
-	"Usage: %s [-hd] [-i <irq>]\n"
-	;
-char help[] =
-	"  -h   print this helpful message\n"
-	"  -d   debug mode, don't fork into the background\n"
-	"  -i   irq to use for source of entropy (default is 1, the\n"
-	"       PC keyboard)\n"
-	"\n"
-	"Unmount /dev/random and /dev/urandom to unload the driver\n"
-	"nicely, it will exit when there are no mounted devices and\n"
-	"no open files.\n"
-	"\n"
-	"/dev/random acts like a pipe, it will return as much data as\n"
-	"is available, or at least one byte if it blocks. /dev/urandom\n"
-	"will return successive cryptographic hashes of the same data,\n"
-	"so it's not as random but sill useful, and it never blocks.\n"
-	"\n"
-	"Use a good irq as a source for entropy, not the timer interrupt!\n"
-	"The mouse or keyboard interrupt would be a good choice.\n"
-	;
-
-void Help()
-{
-	printf("%s", help);
-}
-void Usage(FILE* out)
-{
-	fprintf(out, usage, arg0);
-}
-void GetOpts(int argc, char* argv[])
-{
-	int opt;
-
-	arg0 = strrchr(argv[0], '/');
-	arg0 = arg0 ? arg0 : argv[0];
-
-	while((opt = getopt(argc, argv, "hdi:")) != -1) {
-		switch(opt) {
-		case 'h':
-			Usage(stdout);
-			Help();
-			exit(0);
-
-		case 'd':
-			optDebug = 1;
-			break;
-
-		case 'i':
-			optIrq = atoi(optarg);
-			break;
-
-		default:	
-			Usage(stderr);
-			exit(1);
-		}
-	}
-
-	if(optIrq == 0) {
-		Error("A source of randomness must be specified!\n");
-	}
-}
-
-/*
 * Main
 */
 int main(int argc, char* argv[])
@@ -328,10 +224,10 @@ int main(int argc, char* argv[])
 */
 void HookIrqs()
 {
-	if(HookIrqNo(optIrq) == -1)
-		Error("Attach to %d failed: [%d] %s\n", optIrq, ERR(errno));
-	if(!rand_initialize_irq(optIrq)) {
-		Error("Attach to %d failed: [%d] %s\n", optIrq, ERR(ENOMEM));
+	if(HookIrqNo(options.irq) == -1)
+		Error("Attach to %d failed: [%d] %s\n", options.irq, ERR(errno));
+	if(!rand_initialize_irq(options.irq)) {
+		Error("Attach to %d failed: [%d] %s\n", options.irq, ERR(ENOMEM));
 	}
 }
 void SetProcessFlags()
@@ -341,7 +237,7 @@ void SetProcessFlags()
 		  _PPF_PRIORITY_REC		// receive requests in priority order
 		| _PPF_SERVER			// we're a server, send us version requests
 		| _PPF_PRIORITY_FLOAT	// float our priority to clients
-		| _PPF_SIGCATCH		// catch our clients signals, to clean up
+		| _PPF_SIGCATCH			// catch our clients signals, to clean up
 		;
 
 	if(qnx_pflags(pflags, pflags, 0, 0) == -1)
@@ -353,61 +249,6 @@ void AttachPrefix(const char* prefix, int unit)
 	if(qnx_prefix_attach(prefix, 0, unit) == -1)
 		Error("qnx_prefix_attach %s failed: [%d] %s",
 			prefix, ERR(errno));
-}
-void Fork()
-{
-	if(!optDebug) {
-		pid_t	child = fork();
-
-		switch(child) {
-		case -1:
-			Error("fork failed: [%d] %s", ERR(errno));
-
-		case 0:
-			if(Receive(getppid(), 0, 0) == -1)
-				Error("Receive from parent %d failed: [%d] %s",
-					getppid(), ERR(errno));
-
-			qnx_scheduler(0, 0, SCHED_RR, -1, 1);
-
-			signal(SIGHUP, SIG_IGN);
-			signal(SIGINT, SIG_IGN);
-
-			setsid();
-
-			chdir("/");
-
-			break;
-
-			// the parent will wait for the Reply() to indicate that it has
-			// started running
-		default:
-			if(Send(child, 0, 0, 0, 0) == -1)
-				exit(1);
-			exit(0);
-		}
-	}
-}
-void Daemonize()
-{
-	if(!optDebug) {
-/*
-	can use this to keep device times up-to-date
-		struct _osinfo osdata;
-		if(qnx_osinfo(0, &osdata) == -1) {
-		perror("osinfo");
-		return -1;
-		}
-		timep = MK_FP(osdata.timesel, offsetof(struct _timesel, seconds));
-*/
-
-		// free up our parent, if we have one
-		Reply(getppid(), 0, 0);
-
-		close(0);
-		close(1);
-		close(2);
-	}
 }
 int Loop()
 {
@@ -428,7 +269,7 @@ int Loop()
 			while(Creceive(pid, 0, 0) == pid)
 				; // clear out any proxy overruns
 
-			add_interrupt_randomness(optIrq);
+			add_interrupt_randomness(options.irq);
 
 //			Log("Irq: random size %d\n", get_random_size());
 
