@@ -18,6 +18,11 @@
 #	include "rdtsc64.h"
 #endif
 
+void rand_initialize(void);
+int rand_initialize_irq(int irq);
+void add_interrupt_randomness(int irq);
+void get_random_bytes(void *buf, int nbytes);
+int  get_random_size(void);
 
 /*
 struct file
@@ -36,11 +41,11 @@ struct wait_queue
 	struct file* f;
 	struct wait_queue* q;
 };
-*/
 
 void wake_up_interruptible(struct wait_queue** wq);
 
 typedef struct poll_table poll_table;
+*/
 
 /*
 * Typedefs used by the module.
@@ -74,12 +79,14 @@ typedef __u32 loff_t;
 
 #define rotate_left(I, WORD) _lrotl(WORD, I)
 
+/*
 int copy_from_user(void* dst, const void* src, size_t bytes)
 {
 	memcpy(dst, src, bytes);
 
 	return bytes;
 }
+*/
 
 #endif
 

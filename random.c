@@ -431,7 +431,6 @@ static struct timer_rand_state extract_timer_state;
 static struct timer_rand_state *irq_timer_state[NR_IRQS];
 #ifndef __QNX__
 static struct timer_rand_state *blkdev_timer_state[MAX_BLKDEV];
-#endif
 static struct wait_queue *random_read_wait;
 static struct wait_queue *random_write_wait;
 
@@ -444,6 +443,7 @@ static ssize_t random_write(struct file * file, const char * buffer,
 			    size_t count, loff_t *ppos);
 static int random_ioctl(struct inode * inode, struct file * file,
 			unsigned int cmd, unsigned long arg);
+#endif
 
 static inline void fast_add_entropy_words(struct random_bucket *r,
 					 __u32 x, __u32 y);
@@ -574,16 +574,26 @@ __initfunc(void rand_initialize(void))
 	initialize_benchmark(&timer_benchmark, "timer", 0);
 #endif
 	extract_timer_state.dont_count_entropy = 1;
+#ifndef __QNX__
 	random_read_wait = NULL;
 	random_write_wait = NULL;
+#endif
 }
 
+#ifdef __QNX__
+int rand_initialize_irq(int irq)
+#else
 void rand_initialize_irq(int irq)
+#endif
 {
 	struct timer_rand_state *state;
 	
 	if (irq >= NR_IRQS || irq_timer_state[irq])
+#ifdef __QNX__
+		return 0;
+#else
 		return;
+#endif
 
 	/*
 	 * If kmalloc returns null, we just won't use that entropy
@@ -594,6 +604,12 @@ void rand_initialize_irq(int irq)
 		irq_timer_state[irq] = state;
 		memset(state, 0, sizeof(struct timer_rand_state));
 	}
+#ifdef __QNX__
+	if(state)
+		return 1;
+	else
+		return 0;
+#endif
 }
 
 #ifndef __QNX__
@@ -795,8 +811,8 @@ static void add_timer_randomness(struct random_bucket *r,
 			r->entropy_count = POOLBITS;
 
 		/* Wake up waiting processes, if we have enough entropy. */
-		if (r->entropy_count >= WAIT_INPUT_BITS)
-			wake_up_interruptible(&random_read_wait);
+//		if (r->entropy_count >= WAIT_INPUT_BITS)
+//			wake_up_interruptible(&random_read_wait);
 	}
 		
 #ifdef RANDOM_BENCHMARK
@@ -1255,8 +1271,8 @@ static ssize_t extract_entropy(struct random_bucket *r, char * buf,
 	else
 		r->entropy_count = 0;
 
-	if (r->entropy_count < WAIT_OUTPUT_BITS)
-		wake_up_interruptible(&random_write_wait);
+//	if (r->entropy_count < WAIT_OUTPUT_BITS)
+//		wake_up_interruptible(&random_write_wait);
 	
 	while (nbytes) {
 		/* Hash the pool to get the output */
@@ -1340,6 +1356,12 @@ void get_random_bytes(void *buf, int nbytes)
 {
 	extract_entropy(&random_state, (char *) buf, nbytes, 0);
 }
+#ifdef __QNX__
+int get_random_size(void)
+{
+	return random_state.entropy_count / 8;
+}
+#endif
 
 #ifndef __QNX__
 static ssize_t
@@ -1419,6 +1441,7 @@ random_poll(struct file *file, poll_table * wait)
 }
 #endif
 
+#ifndef __QNX__
 static ssize_t
 random_write(struct file * file, const char * buffer,
 	     size_t count, loff_t *ppos)
@@ -1449,11 +1472,12 @@ random_write(struct file * file, const char * buffer,
 	if (p == buffer) {
 		return (ssize_t)ret;
 	} else {
-//		file->f_dentry->d_inode->i_mtime = CURRENT_TIME;
-//		mark_inode_dirty(file->f_dentry->d_inode);
+		file->f_dentry->d_inode->i_mtime = CURRENT_TIME;
+		mark_inode_dirty(file->f_dentry->d_inode);
 		return (ssize_t)(p - buffer);
 	}
 }
+#endif
 
 #ifndef __QNX__
 static int
