@@ -13,6 +13,7 @@ devrandirq.c
 devrandirq.h
 random.c
 random.c.linux
+random.c.new
 random.h
 rdtsc64.h
 util.c
