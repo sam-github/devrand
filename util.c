@@ -2,6 +2,7 @@
 * Common support files.
 */
 
+#include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -9,6 +10,11 @@
 #include <unistd.h>
 
 #include <sys/sched.h>
+
+#ifdef __QNXNTO__
+#include <sys/neutrino.h>
+#include <sys/procmgr.h>
+#endif
 
 #include "util.h"
 
@@ -22,6 +28,7 @@ struct Options options =
 char usage[] =
 	"Usage: %s [-hd] [-i <irq>]\n"
 	;
+
 char help[] =
 	"  -h   print this helpful message\n"
 	"  -d   debug mode, don't fork into the background\n"
@@ -117,6 +124,7 @@ void Log(const char* format, ...)
 void Fork()
 {
 	if(!options.debug) {
+#ifndef __QNXNTO__
 		pid_t	child = fork();
 
 		switch(child) {
@@ -124,18 +132,17 @@ void Fork()
 			Error("fork failed: [%d] %s", ERR(errno));
 
 		case 0:
-#ifndef __QNXNTO__
 			if(Receive(getppid(), 0, 0) == -1)
 				Error("Receive from parent %d failed: [%d] %s",
 					getppid(), ERR(errno));
 
 			qnx_scheduler(0, 0, SCHED_RR, -1, 1);
-#endif
 
 			signal(SIGHUP, SIG_IGN);
 			signal(SIGINT, SIG_IGN);
 
 			setsid();
+			umask(0);
 
 			chdir("/");
 
@@ -148,9 +155,9 @@ void Fork()
 				exit(1);
 			exit(0);
 		}
+#endif
 	}
 }
-
 void Daemonize()
 {
 	if(!options.debug) {
@@ -168,11 +175,18 @@ void Daemonize()
 
 		// free up our parent, if we have one
 		Reply(getppid(), 0, 0);
-#endif
 
 		close(0);
 		close(1);
 		close(2);
+#else
+	int coid = procmgr_daemon(0, 0);
+	if(coid == -1) {
+		Error("daemon mode failed: [%d] %s", ERR(errno));
+	}
+	ConnectDetach(coid);
+#endif
+
 	}
 }
 
