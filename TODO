@@ -6,8 +6,21 @@
 
 * Multiple irqs (use keyboard, mouse, and network card).
 
+* Query the system for irqs associated with particular devices.
+
 * Port newest version of random.c from linux 1.3 series kernels
   (this is random.c.new).
+
+* Ask Ted about entropy estimation.
+
+* Does unlink() work?
+
+* Can mount()/umount() work?
+
+* Use the Nto ClockCycles() call to get the TSC, if this is a good
+  idea.
+
+* Implement seeking as a nul op, so "hd /dev/urandom" works.
 
 The following would make the implementation more complete, but
 aren't necessary.
