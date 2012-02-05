@@ -24,8 +24,9 @@ devc-random: devc-random.o random.o util.o
 	$(LINK.c) -o $@ $^
 	chown root $@
 	chmod u+s $@
-#	$@ -h | usemsg $@ -
-#	chown root $@
+	$@ -h > $@.use
+	usemsg $@ $@.use
+	chown root $@
 
 Dev.random: devrand.o devrandirq.o random.o util.o
 	$(LINK.c) -T1 -o $@ $^
