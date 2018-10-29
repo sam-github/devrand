@@ -42,7 +42,9 @@
 #include "devrandirq.h"
 #include "random.h"
 #include "util.h"
-
+#ifndef EOK
+#define EOK 0
+#endif
 int		Service(pid_t pid, Msg* msg);
 int		Loop();
 void	SetProcessFlags();
@@ -773,7 +775,7 @@ int Select(pid_t pid, struct _io_select* msg)
 */
 
 #define FDMAX 256
-
+int globalIndex = 0;
 void*	ctrl_ = 0;
 Ocb*	ocbs_[FDMAX];
 
@@ -785,7 +787,7 @@ void FdInit()
 Ocb* FdGet(pid_t pid, int fd)
 {
 	int index = (int) __get_fd(pid, fd, ctrl_);
-
+    globalIndex =index;
 	if(index <= 0 || index >= FDMAX) {
 		errno = EBADF;
 		return 0;
@@ -806,8 +808,9 @@ int FdMap(pid_t pid, int fd, Ocb* ocb)
 
 	if(ocb) {
 		index = 1;
-		while(ocbs_[index])
+		while(ocbs_[index]!=NULL){
 			index++;
+        }
 	}
 	if(index >= FDMAX) {
 		errno = ENOMEM;
@@ -846,8 +849,10 @@ int FdUnMap(pid_t pid, int fd)
 	link_count--;
 
 	if(ocb->links == 0)
+    {
 		free(ocb);
-
+        ocbs_[globalIndex] = NULL;
+    }
 	return 1;
 }
 void FdGetPrio(pid_t pid, int* priority)
